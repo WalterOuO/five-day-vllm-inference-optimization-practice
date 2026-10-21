@@ -1,0 +1,6 @@
+model: "Qwen/Qwen2.5-3B-Instruct"
+prompts_json_path: "data/prompts/benchmark_prompts.json"
+gradients_k: [2, 4, 8, 16]
+concurrency: 4
+generation_tokens: 256
+max_num_batched_tokens: 2048
