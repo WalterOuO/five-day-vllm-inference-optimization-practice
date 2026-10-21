@@ -1,0 +1,14 @@
+base:
+  prompt_file: "data/prompts/benchmark_prompts.json"
+  max_gen_tokens: 512        # Generation 512 tokens
+  gpu_memory_utilization: 0.85
+
+baseline:
+  model_id: "Qwen/Qwen2.5-3B-Instruct"
+  quantization: null
+  dtype: "float16"
+
+awq:
+  model_id: "Qwen/Qwen2.5-3B-Instruct-AWQ"
+  quantization: "awq"
+  dtype: "float16"
