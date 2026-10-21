@@ -1,0 +1,13 @@
+{
+    "mode": "awq",
+    "model": "Qwen/Qwen2.5-3B-Instruct-AWQ",
+    "prompt_file": "data/prompts/benchmark_prompts.json",
+    "concurrency": 30,
+    "total_parameters_count": 3396861952,
+    "model_weight_vram_gb": 1.82,
+    "kv_cache_pool_vram_gb": 10.26,
+    "total_reserved_vram_gb": 12.08,
+    "total_time_sec": 45.21,
+    "total_gen_tokens": 14943,
+    "system_tps": 330.54
+}
