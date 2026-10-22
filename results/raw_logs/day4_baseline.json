@@ -1,0 +1,12 @@
+{
+  "mode": "baseline",
+  "swap_space_gb": 0,
+  "success": false,
+  "error_msg": "EngineArgs.__init__() got an unexpected keyword argument 'swap_space'",
+  "elapsed_time_s": 0.0,
+  "throughput_tps": 0.0,
+  "model_vram_gb": 6.33,
+  "gpu_kv_cache_vram_gb": 3.36,
+  "est_kv_demand_gb": 8.79,
+  "est_cpu_swapped_gb": 0.0
+}

@@ -1,0 +1,14 @@
+model_id: "Qwen/Qwen2.5-3B-Instruct"
+
+# 故意限制 GPU 顯存上限為 70%，讓 GPU KV Cache 僅分配約 4.3 GB
+gpu_memory_utilization: 0.70
+max_model_len: 18000
+
+# 壓測參數：16 併發 x 16K 長文本 = 256K Tokens 需求 (~9.0 GB KV Cache)
+concurrency: 16
+prompt_stitching_count: 16  # 從 benchmark_prompts.json 拼接 16 個 1K prompt 達成 16K 長度
+max_tokens: 128
+
+# CPU Offload / Swapping 空間設定 (GB)
+baseline_offload_gb: 0    # Baseline: 0GB CPU Offload，觸發顯存極限/搶占/OOM
+optimization_offload_gb: 16 # Optimization: 16GB CPU Offload 空間
