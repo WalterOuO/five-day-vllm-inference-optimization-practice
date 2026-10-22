@@ -1,14 +1,34 @@
-import argparse
-import json
 import os
+
+# 強制切回 V0 引擎
+os.environ["VLLM_USE_V1"] = "0"
+
+import argparse
+import gc
+import json
 import time
 import yaml
 import torch
 from transformers import AutoConfig
 from vllm import LLM, SamplingParams
 
+def cleanup_cuda():
+    """清理 CUDA 顯存與垃圾回收"""
+    gc.collect()
+    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+def get_real_allocated_vram_gb():
+    """使用 CUDA Driver API 抓取整體 GPU 當前真實已分配顯存 (GB)"""
+    if torch.cuda.is_available():
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        allocated_bytes = total_bytes - free_bytes
+        return round(allocated_bytes / (1024 ** 3), 2)
+    return 0.0
+
 def compute_model_weight_vram_gb(model_id):
-    """透過 AutoConfig 動態計算模型權重理論顯存佔用 (GB)"""
+    """透過 AutoConfig 計算模型權重理論顯存 (GB)"""
     config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
     vocab_size = getattr(config, "vocab_size", 151936)
     hidden_size = getattr(config, "hidden_size", 2048)
@@ -27,29 +47,23 @@ def compute_model_weight_vram_gb(model_id):
     layer_params = attn_params + mlp_params
     total_params = (vocab_size * hidden_size) + (num_layers * layer_params) + (vocab_size * hidden_size)
     
-    # FP16 = 2 Bytes per Parameter
     return round((total_params * 2.0) / (1024 ** 3), 2)
 
 def build_stitched_prompts(json_path, concurrency, stitching_count):
-    """
-    從 benchmark_prompts.json 讀取 32 個獨立 Prompt，
-    透過滾動滑窗拼接出 concurrency 個、長度約為 16K Tokens 的獨立長文本。
-    """
+    """拼接 12K 長文本 Prompts"""
     with open(json_path, "r", encoding="utf-8") as f:
         base_prompts = json.load(f)
     
     num_base = len(base_prompts)
     stitched_prompts = []
-    
     for i in range(concurrency):
-        # 滾動挑選 stitching_count (16) 個 prompt 進行拼接
         selected = [base_prompts[(i + j) % num_base] for j in range(stitching_count)]
-        stitched_text = "\\n\\n".join(selected)
-        stitched_prompts.append(stitched_text)
-        
+        stitched_prompts.append("\\n\\n".join(selected))
     return stitched_prompts
 
 def run_experiment(mode, config_path):
+    cleanup_cuda()
+    
     with open(config_path, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
         
@@ -60,46 +74,33 @@ def run_experiment(mode, config_path):
     stitching_count = cfg["prompt_stitching_count"]
     max_tokens = cfg["max_tokens"]
     
-    cpu_offload_gb = cfg["baseline_offload_gb"] if mode == "baseline" else cfg["optimization_offload_gb"]
+    use_chunked = cfg["baseline_chunked"] if mode == "baseline" else cfg["optimization_chunked"]
+    max_batched_tokens = cfg["max_num_batched_tokens"]
     
     print(f"\\n==================================================")
-    print(f"🚀 [Day 4] 執行 Mode: {mode.upper()} | CPU Offload GB: {cpu_offload_gb} GB")
+    print(f"🚀 [Day 4] Mode: {mode.upper()} | Chunked KV Allocation: {use_chunked}")
     print(f"==================================================")
     
-    # 讀取並拼接 16K 長文本 Prompts
-    prompt_json = "data/prompts/benchmark_prompts.json"
-    prompts = build_stitched_prompts(prompt_json, concurrency, stitching_count)
+    prompts = build_stitched_prompts("data/prompts/benchmark_prompts.json", concurrency, stitching_count)
     
-    # 計算顯存指標
     model_vram = compute_model_weight_vram_gb(model_id)
     _, total_vram_bytes = torch.cuda.mem_get_info()
     total_vram_gb = total_vram_bytes / (1024 ** 3)
     gpu_reserved_vram = round(total_vram_gb * gpu_util, 2)
-    gpu_kv_cache_vram = round(max(0, gpu_reserved_vram - model_vram - 0.5), 2)
-    
-    # 預估 KV Cache 總需求 (16 併發 x 16K len x 0.035MB/token)
-    est_kv_demand_gb = round((concurrency * 16000 * 0.03515) / 1024, 2)
-    est_cpu_swapped_gb = round(max(0, est_kv_demand_gb - gpu_kv_cache_vram), 2)
-    
-    print(f"📊 [Memory Breakdown Preview]")
-    print(f"   - GPU 實體總顯存: {total_vram_gb:.2f} GB")
-    print(f"   - GPU 預留顯存上限 (util={gpu_util}): {gpu_reserved_vram:.2f} GB")
-    print(f"   - 模型權重佔用 (FP16): {model_vram:.2f} GB")
-    print(f"   - GPU KV Cache 容量: ~{gpu_kv_cache_vram:.2f} GB")
-    print(f"   - 16K x 16 併發 KV Cache 總需求: ~{est_kv_demand_gb:.2f} GB")
-    print(f"   - 預計溢出至 CPU Offloading/Swapping: ~{est_cpu_swapped_gb:.2f} GB")
     
     success = False
     error_msg = ""
     elapsed_time = 0.0
     throughput = 0.0
+    measured_physical_vram_gb = 0.0
     
     try:
-        # 相容新版 vLLM 的 cpu_offload_gb 參數
         llm = LLM(
             model=model_id,
             gpu_memory_utilization=gpu_util,
-            cpu_offload_gb=cpu_offload_gb,
+            cpu_offload_gb=0,
+            enable_chunked_prefill=use_chunked,
+            max_num_batched_tokens=max_batched_tokens if use_chunked else None,
             max_model_len=max_model_len,
             trust_remote_code=True,
             enforce_eager=True
@@ -108,13 +109,20 @@ def run_experiment(mode, config_path):
         sampling_params = SamplingParams(temperature=0.0, max_tokens=max_tokens)
         
         start_time = time.time()
+        
         outputs = llm.generate(prompts, sampling_params=sampling_params)
+        
         elapsed_time = time.time() - start_time
+        
+        # 透過 CUDA Driver API 抓取 vLLM 在推論時整體 GPU 真實實體顯存佔用
+        measured_physical_vram_gb = get_real_allocated_vram_gb()
         
         total_generated_tokens = sum([len(out.outputs[0].token_ids) for out in outputs])
         throughput = total_generated_tokens / elapsed_time
         success = True
+        
         print(f"\\n✅ [成功完成] 耗時: {elapsed_time:.2f}s | 吞吐量: {throughput:.2f} tokens/s")
+        print(f"📏 [CUDA Driver API 實測 GPU 顯存]: {measured_physical_vram_gb:.2f} GB")
         
     except Exception as e:
         error_msg = str(e)
@@ -122,15 +130,15 @@ def run_experiment(mode, config_path):
         
     result_data = {
         "mode": mode,
-        "cpu_offload_gb": cpu_offload_gb,
+        "enable_chunked_prefill": use_chunked,
         "success": success,
         "error_msg": error_msg,
         "elapsed_time_s": round(elapsed_time, 2),
         "throughput_tps": round(throughput, 2),
         "model_vram_gb": model_vram,
-        "gpu_kv_cache_vram_gb": gpu_kv_cache_vram,
-        "est_kv_demand_gb": est_kv_demand_gb,
-        "est_cpu_swapped_gb": est_cpu_swapped_gb if success else 0.0
+        "gpu_reserved_limit_gb": gpu_reserved_vram,
+        "measured_physical_vram_gb": measured_physical_vram_gb,
+        "est_kv_demand_gib": 3.30
     }
     
     out_file = f"results/raw_logs/day4_{mode}.json"

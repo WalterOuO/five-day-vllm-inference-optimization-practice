@@ -1,12 +1,12 @@
 {
   "mode": "baseline",
-  "swap_space_gb": 0,
-  "success": false,
-  "error_msg": "EngineArgs.__init__() got an unexpected keyword argument 'swap_space'",
-  "elapsed_time_s": 0.0,
-  "throughput_tps": 0.0,
+  "enable_chunked_prefill": false,
+  "success": true,
+  "error_msg": "",
+  "elapsed_time_s": 319.33,
+  "throughput_tps": 1.6,
   "model_vram_gb": 6.33,
-  "gpu_kv_cache_vram_gb": 3.36,
-  "est_kv_demand_gb": 8.79,
-  "est_cpu_swapped_gb": 0.0
+  "gpu_reserved_limit_gb": 9.47,
+  "measured_physical_vram_gb": 10.23,
+  "est_kv_demand_gib": 3.3
 }

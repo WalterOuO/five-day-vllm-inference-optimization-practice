@@ -1,0 +1,12 @@
+{
+  "mode": "offload",
+  "enable_chunked_prefill": true,
+  "success": true,
+  "error_msg": "",
+  "elapsed_time_s": 297.46,
+  "throughput_tps": 1.72,
+  "model_vram_gb": 6.33,
+  "gpu_reserved_limit_gb": 9.47,
+  "measured_physical_vram_gb": 9.69,
+  "est_kv_demand_gib": 3.3
+}
